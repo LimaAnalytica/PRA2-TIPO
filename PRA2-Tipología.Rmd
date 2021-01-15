@@ -1,0 +1,1168 @@
+---
+title: "Práctica 2: Limpieza y validación de los datos"
+author: 
+- Erika Bracamonte
+- Anthony Alarcon
+date: '`r format(Sys.Date(),"%e de %B, %Y")`'
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Descripción del dataset
+
+En los últimos 10 años, la guerra de ofertas en descuentos, afiliación, incentivo de consumo, etc., ha crecido en el sector bancario, siendo hoy muy común que a cada cliente le llegue un sinfin de ofertas por diversos canales (correo, sms, etc.). Las ofertas que pueda promocionar una entidad bancaria es consecuencia de una negociación con los establecimientos o empresas, en la que la entidad bancaria paga el descuento u oferta que el cliente. Este gasto que realiza la entidad, muchas veces no resulta óptimo, porque el cliente no llega a consumir la oferta.  
+
+El objetivo que nos planteamos es conocer el perfil de consumo del cliente, de tal manera que las ofertas se asignen de manera adecuada. Consiguiéndolo, optimizaríamos el gasto realizado por la entidad bancaria, y conseguiríamos ubicar soluciones a las necesidades de los clientes, de manera menos azarosa.
+
+La base de datos está a nivel de transacciones por cliente y mes. La transformaremos a nivel de clientes, evaluando el mejor indicador para segmentar.
+
+```{r message= FALSE, warning=FALSE}
+
+# En caso no tener instalado algún paquete, lo importamos con install.packages("nombre_paquete")
+library(funModeling)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(clusterSim)
+
+DataConsumo = read.csv(file="BaseConsumo.csv", header=TRUE, sep=";", na.strings=c("","NA"))
+head(DataConsumo)
+
+```
+
+Haciendo una inspección a los datos, tenemos que:  
+
+- Son 40 mil clientes  
+- Son transacciones de clientes durante 12 meses  
+- Son 21 rubros de consumo:  
+
+1.	Prodsuper:		grupo supermercados  
+2.	Restbar:		grupo restaurantes y bares  
+3.	Salud:		grupo farmacia, clínicas, seguro salud, masaje, etc.  
+4.	Vehrep:		grupo repuestos, compra vehículo, gasolina, etc.  
+5.	Entretenimiento:	grupo entrenamiento, guía turística.  
+6.	Tiendadepar:	grupo tienda por departamento.  
+7.	Ropamoda:		grupo tienda de ropa, tienda independiente de mall.  
+8.	Prodpersondiv:	grupo diversos productos personales, joyería, etc.  
+9.	Telcom:		grupo telecomunicaciones, pago celular, recargas, etc.  
+10.	Financiero:		grupo financiero, pago de impuestos, seguros, etc.  
+11.	Transplaerea:	grupo transporte, aerolíneas, bus interprovincial, etc.  
+12.	Clubmkt:		grupo clubes.  
+13.	Prodlocal:		grupo productos locales.  
+14.	Enseñanza:		grupo enseñanza, pago universidades, academia, etc.  
+15.	Belleza:		grupo belleza, gimansio, maquillaje, etc.  
+16.	Prodelectro:	grupo producto electrónico.  
+17.	Alqbienes:		grupo alquiler de bienes, hoteles, pago de departamento, etc.  
+18.	Artcultura:		grupo arte y cultura, teatro, librería, etc.  
+19.	Profdiverso:	grupo profesional, servicio legal, consultoría, etc.  
+20.	Hogaroficina:	grupo hogar y oficina, utensilios para la oficina u hogar.  
+21.	Informática:	grupo informática, software, reparación Pc, etc.   
+
+## Variables Numéricas:  
+
+flgLimaProv: Esta variable es una dummy que nos indica si la transacción fue hecha en Lima (1) o Provincia (0).  
+flgAfBxi: Esta variable es una dummy que indica si la transacción fue por Banca por internet.  
+monto: El monto consumido.  
+trx: La cantidad de transacciones. Recordemos la base de datos está a nivel de cliente y mes.  
+
+## Variables Categóricas:  
+
+codmes: Es el código de mes que es la combinación del año y mes 'yyyymm'.  
+cliente: Es el id del cliente, va de 1 a 40 000.  
+edad: Esta variable está categorizada en 7 niveles.  
+ingreso: Esta variable está categorizada en 8 niveles.  
+sexo: Esta variable tiene 2 categorías.  
+grupoGiro: Es el rubro consumido.  
+
+# Integración y selección de los datos
+
+Convertiremos los valores categóricos que han sido importados como integer: codmes, cliente.
+
+```{r message= FALSE, warning=FALSE}
+
+# En caso no tener instalado algún paquete, lo importamos con install.packages("nombre_paquete")
+df_status(DataConsumo)
+
+#Convertiremos los valores categóricos que han sido importados como integer: codmes, cliente
+DataConsumo$codmes = as.factor(DataConsumo$codmes)
+DataConsumo$cliente = as.factor(DataConsumo$cliente)
+
+```
+
+Como el objetivo propuesto es conocer el perfil de consumo de los clientes, necesitamos hacer la segmentación de los clientes. La base de datos, como ya
+vimos, está a nivel transacciones, por lo que necesitamos generar otra base a nivel de clientes. Para ello, tenemos varios tipos de agregaciones:
+
+1-La cantidad de meses en los que hizo transacciones. Ejemplo: Si presenta transacciones en 201609 y 201610, tendríamos 2 meses en los que consumió.
+2-La cantidad de transacciones.
+3-De los dos anteriores, podemos obtener la cantidad de transacciones mensuales.
+
+Primero, inspeccionemos la base de datos con estas agregaciones:
+
+Veamos la cantidad de transacciones por rubro:
+
+En el top 5 de rubros donde se tiene más transacciones encontramos en orden jerárquico a los supermercados, bares y restaurantes, salud, vehículos y repuestos,
+y entretenimiento.
+
+```{r message= FALSE, warning=FALSE}
+# Usamos la librería dplyr
+
+DataConsumo %>%
+  group_by(grupoGiro) %>%
+    summarise(Cant_Trx = sum(trx)) %>%
+      arrange(desc(Cant_Trx))
+
+```
+Veamos la cantidad de transacciones por mes: 
+
+-El mes de mayor cantidad de transacciones es diciembre, como es de esperarse. 
+
+```{r message= FALSE, warning=FALSE}
+# Creamos la agrupación
+trx_mes=DataConsumo %>%
+            group_by(codmes) %>%
+              summarise(Cant_Trx = sum(trx)) %>%
+                  arrange(codmes)
+
+# Lo convertimos en data frame
+trx_mes=data.frame(trx_mes)
+
+# Imprimimos la salida
+print(trx_mes)
+
+# Graficamos
+ggplot(trx_mes, aes(x = codmes, y = Cant_Trx)) +
+  geom_bar(stat = "identity", fill = "#FF6666")+
+    labs(x = 'Año-Mes', y = 'Cantidad de transacciones', title = "CANTIDAD DE TRANSACCIONES POR MES")
+
+```
+
+Analizamos los posibles indicadores a nivel de cliente:
+-Cantidad de transacciones
+-Cantidad consumida (en soles, moneda de Perú)
+-Promedio de transacciones por mes
+
+El promedio de transacciones por mes es el mejor indicador que resume la información de lo que buscamos (segmentos en los que consume, independientemente de los montos porque buscamos que el cliente consuma la oferta).
+
+# Limpieza de los datos
+
+Evaluaremos también la data que vamos a analizar, porque si bien el promedio de transacciones mensuales puede ser un buen indicador, existen casos que sesguen los resultados. Por ejemplo, clientes que solo realizaron transacciones en un solo mes, puede llevarnos a obtener segmentos de clientes que no consumen frecuentemente, por lo que las ofertas que podamos ofrecerle no tendrían el impacto que buscamos sobre el universo de todos nuestros clientes. Lo mismo con la cantidad de transacciones promedio de los clientes que han consumido los 12 meses, puede llevarnos también a caracterizar un segmento con un promedio no caracterísco de todo el universo.
+
+Para ver cuán estable resulta el promedio de transacciones por frecuencia de consumo:
+
+```{r message= FALSE, warning=FALSE}
+# Hallamos la cantidad meses en los que consumió cada cliente (va de 1 mes a 12)
+meses_trx=DataConsumo %>%
+            group_by(cliente) %>%
+              summarise(distinct_visit_ids = n_distinct(codmes)) 
+
+# Hallamos la cantidad de transacciones por cliente
+sum_trx = DataConsumo %>%
+                group_by(cliente) %>%
+                        summarise(sum(trx))
+
+# Unimos las dos base anteriores para generar una a nivel de cliente
+consumo_cliente = merge(x = meses_trx, y = sum_trx, by = "cliente", all.x = TRUE)
+
+# Cambiamos el nombre de las columnas
+#### Frecuencia de consumo
+colnames(consumo_cliente)[2] = "frec_mes"
+#### Cantidad de transacciones
+colnames(consumo_cliente)[3] = "cant_trx"
+
+
+# Ahora agrupamos por frecuencia de consumo 
+#### Cantidad de clientes por frecuencia de consumo
+fm_cli=consumo_cliente %>%
+            group_by(frec_mes) %>%
+              summarise(cant_cli = n()) 
+#### Cantidad de transacciones por frecuencia de consumo
+fm_trx=consumo_cliente %>%
+            group_by(frec_mes) %>%
+              summarise(cdt_trx = sum(cant_trx)) 
+
+# Unimos las dos bases anteriores para obtener la cantidad de transacciones y clientes por frecuencia de consumo
+frecuencia_mes = merge(x = fm_cli, y = fm_trx, by = "frec_mes", all.x = TRUE)
+
+# Calculamos la cantidad de transacciones promedio en cada frecuencia de consumo. Es decir, el promedio de transacciones mensuales realizadas de los clientes que 
+# consumieron en 1, 2, 3, ..., 12 meses. Para esto dividimos la cantidad de transacciones entre la frecuencia de consumo:
+frecuencia_mes$trx_mes = frecuencia_mes$cdt_trx/frecuencia_mes$frec_mes
+
+# Finalmente obtenemos el promedio de transacciones que el cliente realiza, según la frecuencia de consumo. Vemos que los clientes que 
+# han consumido 3 meses en el año, en promedio, cada mes han realizado 2.44 transacciones.
+frecuencia_mes$prom_trx_cli = frecuencia_mes$trx_mes/frecuencia_mes$cant_cli
+
+# Le damos el formato de dataframe
+frecuencia_mes=data.frame(frecuencia_mes)
+
+# Imprimimos la salida
+frecuencia_mes
+
+```
+Con la tabla obtenida, graficamos el indicador de cantidad de transacciones según frecuencia de consumo.
+```{r message= FALSE, warning=FALSE}
+# Antes de graficar, convertimos en integer la frecuencia de consumo
+frecuencia_mes$frec_mes = as.factor(frecuencia_mes$frec_mes)
+
+# Graficamos el indicador
+ggplot(frecuencia_mes, aes(x=factor(frecuencia_mes$frec_mes), y=frecuencia_mes$prom_trx_cli, group=1)) +
+  geom_line(color='green') +
+    geom_point()+
+      labs(x = 'Frecuencia de consumo (meses)', y = 'Promedio de transacciones por cliente', title = 'CANTIDAD DE TRANSACCIONES POR CLIENTE SEGÚN 
+FRECUENCIA DE CONSUMO (EN MESES)')+
+        geom_text(aes(label=round(frecuencia_mes$prom_trx_cli,2)),hjust=0, vjust=1.3)
+```
+
+El promedio de transacciones mes tiene un comportamiento marcado en aquellos que consumieron en al menos 4 meses, y lo mismo con aquellos que consumieron en más de 10 meses. Si incorporamos a los clientes que tienen esos comportamientos de consumo marcado en la segmentación, podríamos correr el riesgo de tener una sobredimensión del comportamiento de estos grupos mencionados. La acción a seguir es quitar a estos clientes del análisis clúster, y quedarnos con los de un comportamiento "estable": aquellos cuya frecuencia de consumo es 5 a 10 meses.
+
+```{r message= FALSE, warning=FALSE}
+# Usamos la base que creamos a nivel de cliente, y excluimos a aquellos clientes que consumen en al menos 4 meses, inclusive, o en más de 10 meses. 
+consumo_cliente_dep = consumo_cliente[consumo_cliente$frec_mes>=5 & consumo_cliente$frec_mes<=10,]
+
+# Filtramos la base inicial y nos quedamos solo con los clientes que consumen en al menos 4 meses, inclusive, o en más de 10 meses. 
+DataConsumo_dep = filter(DataConsumo, DataConsumo$cliente %in% consumo_cliente_dep$cliente) 
+```
+Una vez obtenida la base de clientes, con los comportamiento "atípicos" excluídos, seguiremos con el agrupamiento para conseguir la base final con la que haremos la segmentación. 
+
+**La idea es tener una base de datos a nivel de cliente con las transacciones que realizan en cada rubro, esto nos permitirá obtener segmentos de rubros de consumo, con los que podremos brindar una oferta según el segmento en el que está el cliente**
+
+```{r message= FALSE, warning=FALSE}
+# Con base en la data anterior, generamos una agregación de la cantidad de transacciones
+Data_Consumo_Cli=DataConsumo_dep %>%
+                  group_by(cliente,grupoGiro,edad,ingreso,sexo) %>%
+                    summarise(sum_trx = sum(trx))
+# Pivotearemos la data anterior, para tener los consumos de rubros a nivel de cliente. Para ello usaremos la función spread de la librería tidyr:
+Data_Consumo_Rubros=spread(data=Data_Consumo_Cli, key=grupoGiro,value = sum_trx)
+
+head(Data_Consumo_Rubros)
+```
+## Normalización
+
+Con la base anterior, hacemos un resumen de los principales estadísticos, vemos que, si bien están en una misma escala (cantidad de transacciones), existe una dispersión alta en cada rubro (ver gráfico de histogramas y cajas).
+```{r message= FALSE, warning=FALSE}
+
+# Existe un rubro '**', al cual cambiaremos de nombre por 'otros'
+colnames(Data_Consumo_Rubros)[5]="otros"
+
+# Sacamos los principales estadísticos de cada rubro. primero, sacamos otro data frame de las columnas de rubros, y luego, usando la función summary, obtenemos las principales estadísticas
+DataRubros = Data_Consumo_Rubros[,c(5:26)]
+summary(DataRubros)
+
+# Graficamos mediante histogramas, las cantidades de transacciones de cada rubro
+ggplot(gather(DataRubros), aes(value)) + 
+    geom_histogram(bins = 10, fill="blue") + 
+      facet_wrap(~key, scales = 'free_x')
+# Graficamos mediante diagramas de cajas, las cantidades de transacciones de cada rubro. Vemos que existen muchos outliers
+ggplot(gather(DataRubros), aes(y=value)) + 
+    geom_boxplot(bins = 10, fill="green") + 
+      facet_wrap(~key, scales = 'free_x')
+
+
+```
+
+Normalizamos con la estandarización normal
+
+```{r message= FALSE, warning=FALSE}
+
+# Convertimosen ceros los NA, porque son valores de cantidad de transacciones en el rubro.
+for (i in colnames(DataRubros)){
+  
+    Data_Consumo_Rubros[,i][is.na(Data_Consumo_Rubros[,i])] = 0
+}
+
+# Estandarizamos con la función scale
+for (i in colnames(DataRubros)){
+  
+  Data_Consumo_Rubros[,i] = scale(unlist(Data_Consumo_Rubros[,i]))
+}
+
+# Mostramos la data estandarizada
+head(Data_Consumo_Rubros)
+
+```
+## Gestión de valores nulos y outliers
+
+Existen valores nulos en las variables edad, ingreso y sexo, pero no representan más del 8.5% respecto al total de datos. En esta etapa, lo más importante es tener las variables de los rubros sin nulos, porque a partir de ella se construirán los clústers. Al final, para caracterizar los clústers, podemos omitir estos valores nulos, dada su poca cantidad.  
+```{r message= FALSE, warning=FALSE}
+# Mostramos la cantidad de ceros y NA por variable
+df_status(Data_Consumo_Rubros)
+
+```
+
+Lo que sí vamos a controlar serán los outliers, que ya vimos en el diagrama de cajas que eran muchos por rubro. Los excluiremos porque los outliers sí condicionan la segmentación, al ser comportamientos atípicos.
+
+```{r message= FALSE, warning=FALSE}
+# Convertimos en numéricas nuestras variables de rubro
+for (i in 5:26){
+  Data_Consumo_Rubros[,i] = as.numeric(unlist(Data_Consumo_Rubros[,i]))
+}
+
+# Hacemos la gestión de outliers
+Data_Consumo_Rubros$outliers = FALSE
+for (i in 5:26){
+      columna = Data_Consumo_Rubros[,i]
+        media=mean(unlist(columna))
+      desviacion = sd(unlist(columna))
+      Data_Consumo_Rubros$outliers = (Data_Consumo_Rubros$outliers | columna>(media+3*desviacion) | columna<(media-3*desviacion)) 
+  }
+# Marcamos los TRUE y FALSE
+table(Data_Consumo_Rubros$outliers)
+
+# Separamos el dataframe donde tenemos los outliers. Podría ser útil para un estudio nuevo sobre clientes "atípicos"
+datosOutliers = Data_Consumo_Rubros[Data_Consumo_Rubros$outliers,]
+
+# Marcamos los outliers en la data, los eliminamos y dibujamos
+Data_Consumo_Rubros=Data_Consumo_Rubros[!Data_Consumo_Rubros$outliers,]
+
+# Y ya no necesitamos que haya una columna "outliers"
+Data_Consumo_Rubros$outliers=NULL
+
+# Mostramos la data sin outliers
+print(Data_Consumo_Rubros)
+
+```
+## Discretización
+
+Vemos que el conjunto de datos ya vino con las variables discretizadas: edad e ingreso. Lo que sí vamos a utilizar es la reducción de la dimensionalidad.
+
+## Reducción de dimensionalidad
+
+En este paso, verificaremos si las variables de los rubros pueden reducirse de 22 a un número menor. Para esto, usaremos el análisis de componentes principales.
+
+Como vemos en el gráfico, todas las componentes aportan, en una proporción pequeña, a explicar la variabilidad de los datos. Buscaremos explicar al menos el 75% de la variabilidad (información), y esto lo encontramos en los 11 primeros componentes, 77.42%.
+
+```{r message= FALSE, warning=FALSE}
+# Usaremos la función prcomp, para realizar el análisis de componentes principales
+pca <- prcomp(Data_Consumo_Rubros[,5:26])
+
+# Calculamos la proporción de varianza explicada por cada componente
+prop_varianza <- pca$sdev^2 / sum(pca$sdev^2)
+
+# Graficamos la proporción de varianza explicada por cada componente
+ggplot(data = data.frame(prop_varianza),
+       aes(x = 1:22, y = prop_varianza)) +
+  geom_col(width = 0.3, color="green") +
+  scale_y_continuous(limits = c(0,0.16)) +
+  theme_bw() +
+  labs(x = "Componente principal",
+       y = "Prop. de varianza explicada")
+
+# Calculamos la proporción acumulada de varianza explicada por cada componente
+prop_varianza_acum <- cumsum(prop_varianza)
+
+# Graficamos la proporción acumulada de varianza explicada por cada componente
+ggplot(data = data.frame(prop_varianza_acum),
+       aes(x = 1:22, y = prop_varianza_acum, group = 1)) +
+  geom_point() +
+  geom_line(color="red") +
+  theme_bw() +
+  labs(x = "Componente principal",
+       y = "Prop. varianza explicada acumulada")
+
+# Mostramos la varianza acumulado explicada por la cantidad de componentes elegidos (11)
+prop_varianza_acum[11]
+
+```
+Ahora, trabajaremos en las variables capturadas por cada componente. En este paso, nos ayudaremos de un archivo excel para resaltar las variables con mayor aporte en cada componente (sea positivo o negativo). 
+
+Agregamos estos componentes y generamos el dataset reducido.
+
+```{r message= FALSE, warning=FALSE}
+# Exportamos los componentes y las variables a un csv:
+# write.csv(pca$rotation, file = 'pca_consumo.csv')
+
+# Traemos a un data frame, los 11 componentes principales que elegimos:
+comp_princ = data.frame(pca$x[,1:11])
+
+# Los renombramos según lo trabajado en el archivo excel:
+colnames(comp_princ)[1] = "sector_viaje"
+colnames(comp_princ)[2] = "sector_rest_bar"
+colnames(comp_princ)[3] = "sector_salud"
+colnames(comp_princ)[4] = "sector_supermcd"
+colnames(comp_princ)[5] = "sector_electronico"
+colnames(comp_princ)[6] = "sector_tienda_depart"
+colnames(comp_princ)[7] = "sector_vehiculo"
+colnames(comp_princ)[8] = "sector_finanzas"
+colnames(comp_princ)[9] = "sector_eduacion"
+colnames(comp_princ)[10] = "sector_clubes"
+colnames(comp_princ)[11] = "sector_entretenimiento"
+
+# Traemos la data de consumo rubros, que está a nivel de cliente, y que tiene la información descriptiva. Lo transformamos en data frame
+Data_Consumo_Rubros = data.frame(Data_Consumo_Rubros)
+
+# Calculamos la base final, con los datos descriptivos a nivel de clientes, y los 11 componentes principales:
+Data_Consumo_Final = cbind(Data_Consumo_Rubros[,c(1:4)],comp_princ)
+Data_Consumo_Final = data.frame(Data_Consumo_Final)
+
+head(Data_Consumo_Final)
+```
+
+# Análisis de los datos
+
+## Normalidad y homocedasticidad
+
+Para la prueba de normalidad definimos la hipótesis
+
+$$
+  H_{0}: La~muestra~proviene~de~una~distribución~normal. \\
+  H_{1}: La muestra~no~proviene~de~una~distribución~normal
+$$
+Ahora fijamos un nivel de significancia de 0.05
+
+Y el criterio de decisión es:
+
+$$
+Si~~p < 0.05~~~Se~rechaza \\
+Si~~p >= 0.05~~~No~se~rechaza~Ho
+$$
+
+Usamos el test de normalidad de Lilliefors que es el equivalente a Sahpiro Wilks, pero que asume media y varianza desconocidas.
+
+```{r message= FALSE, warning=FALSE}
+
+# install.packages("normtest")
+library(nortest)
+
+lillie.test(x = Data_Consumo_Final$sector_viaje)
+lillie.test(x = Data_Consumo_Final$sector_rest_bar)
+lillie.test(x = Data_Consumo_Final$sector_salud)
+lillie.test(x = Data_Consumo_Final$sector_supermcd)
+lillie.test(x = Data_Consumo_Final$sector_electronico)
+lillie.test(x = Data_Consumo_Final$sector_tienda_depart)
+lillie.test(x = Data_Consumo_Final$sector_vehiculo)
+lillie.test(x = Data_Consumo_Final$sector_finanzas)
+lillie.test(x = Data_Consumo_Final$sector_eduacion)
+lillie.test(x = Data_Consumo_Final$sector_clubes)
+lillie.test(x = Data_Consumo_Final$sector_entretenimiento)
+
+```
+
+Observamos que todas las variables tienen un p-valor menor que 5%. Por lo tanto, ninguna de las variables de transacciones en los sectores de consumos se distribuyen normalmente.
+
+Ahora, probaremos la homogeneidad de varianzas usando la prueba de Levene.
+
+```{r message= FALSE, warning=FALSE}
+library(car)
+
+leveneTest(y = Data_Consumo_Cli$sum_trx, group = Data_Consumo_Cli$sexo, center = "mean")
+leveneTest(y = Data_Consumo_Cli$sum_trx, group = Data_Consumo_Cli$edad, center = "mean")
+leveneTest(y = Data_Consumo_Cli$sum_trx, group = Data_Consumo_Cli$ingreso, center = "mean")
+
+```
+
+Observamos que existen diferencias significativas entre las varianzas de las categorías de las variables sexo, ingresos y edad.
+
+Que las varianzas de las categorías de las variables sean distintas resulta bueno para el objetivo que perseguimos. Buscamos segmentar, y para ello necesitamos variables que aporten información que diferencie el consumo. Por el lado de la normalidad, si bien las transacciones por cada sector no se distribuyen normalmente, no importa tanto para nuestro modelo, dato que es no supervisado.
+
+## Regresión
+
+Para esta parte, usaremos el análisis de regresión, más allá de ajustar un modelo lineal teórico, buscamos obtener la significancia de las variables independientes (categóricas) para explicar el consumo.
+
+```{r message= FALSE, warning=FALSE}
+
+regresion_clustering <- lm(sum_trx ~ sexo+ingreso+edad, data = Data_Consumo_Cli)
+summary(regresion_clustering)
+
+```
+
+Observamos que los clientes con ingresos menores que 1500 y de edades menores que 30 y las comprendidas entre 35 y 45 son variables no significativas. Esto nos habla sobre el aporte de cada variable, y obervamos que, en general, las independientes aportan información relevante, por lo que la clusterización es idónea.
+
+## Correlaciones
+
+Las variables numéricas que analizaremos son los componentes calculados. Evidentemente todas tienen correlación 0.
+
+```{r message= FALSE, warning=FALSE}
+# Llamamos a la librería corrplot
+library(corrplot)
+
+# Hallamos la matriz de correlación
+correlacion=cor(Data_Consumo_Final[,c(5:15)])
+
+# Graficamos
+corrplot(correlacion, method="number", type="upper")
+
+```
+
+## Clustering k-means
+
+En este apartado obtendremos la segmentación de consumo, a través del método de clasificación k-means. Es importante recordar que la principal dificultad de este método, está en encontrar el número óptimo de clústers. Para ello, usaremos diferentes indicadores.
+
+**Codo de Jambu**
+
+Bajo este método, si bien la caída de la curva no se acelera en ningún punto en particular, podemos observar que con 7 clústers empieza a caer más despacio.
+Este método sugiere usar 7 clústers.
+
+```{r message= FALSE, warning=FALSE}
+head(Data_Consumo_Final[,5:15])
+
+# Calculamos la suma total de cuadrados
+wss <- (nrow(Data_Consumo_Final[,5:15])-1)*sum(apply(Data_Consumo_Final[,5:15],2,var))
+
+# Lo calculamos por clusters
+for (i in 2:15) wss[i] <- sum(kmeans(Data_Consumo_Final[,5:15],
+                                     centers=i)$withinss)
+# Graficamos el Codo de Jambu
+plot(1:15, wss, type="b", xlab="Número de Clusters",
+     ylab="Suma de cuadrados within") 
+
+```
+
+**Índice Calinski Harabasz**
+
+Este índice está basado en una F de anova.
+
+El gráfico sugiere que el número óptimo de segmentos es 12 (punto más alto), pero podríamos considerar también 2, 8, 9, 10 y 11. 
+La idea es obtener un número de clúster moderado, y éste podría ser 8. Veamos con los siguientes índices.
+
+```{r message= FALSE, warning=FALSE}
+# Traemos a la librería fpc
+library(fpc)
+
+# Normalizamos la base
+data_escale = scale(Data_Consumo_Final[,5:15])
+
+# Inicializamos la silueta, para que se almacen los valores calculados por el número de clústers
+silueta <- rep (0 , times =15)
+
+# Aplicamos un bucle para obtener los clústers y la silueta, mediante el criterio de Calinski Harabasz
+for (k in 2:15) {
+  clus <- kmeansruns(data_escale, krange = 2:15 , criterion = "ch", iter.max = 5, runs = 5, scaledata = FALSE, critout = FALSE) 
+silueta[k] <- clus$crit[k] } 
+
+# Mostramos el número óptimo de segmentos según este indicador: 12
+clus$bestk
+
+# Graficamos la silueta
+plot(1:15 ,silueta ,type = "l",xlab =" Número de segmentos" , ylab ="Silueta", main = "ÍNDICE DE CALINSKI HARABASZ")
+```
+
+**Método de Silueta Media**
+
+Según este método, vemos que el número óptimo de clústers es 2, aunque otro valor a considerar en segundo orden puede ser 9.
+
+```{r message= FALSE, warning=FALSE}
+
+# Usamos la data_escale que construimos en el paso anterior
+d <- daisy(data_escale) 
+
+# Inicializamos nuestra variable a graficar
+resultados <- rep(0, 15)
+
+# Aplicamos el bucle con el método de la media de los valores de la silueta
+for (i in c(2:15))
+{
+  fit           <- kmeans(data_escale, i)
+  y_cluster     <- fit$cluster
+  sk            <- silhouette(y_cluster, d)
+  resultados[i] <- mean(sk[,3])
+}
+# Graficamos
+plot(2:15,resultados[2:15],type="o",col="blue",pch=0,xlab="Numero de clusters",ylab="Silueta", main= "Método de la silueta media")
+```
+
+**Método AWS**
+
+Según este método, vemos que el número óptimo de clústers es 3, aunque otros valores a considerar en segundo orden podrían ser 3, 4, 5 y 8.
+
+```{r message= FALSE, warning=FALSE}
+
+# Evaluar usando el criterio ASW (average sillouethe width)
+set.seed(2) #Para evitar aleatoriedad en los resultados
+clustering_asw <- kmeansruns(data_escale,krange=2:15,criterion="asw",
+                             iter.max=100, runs= 100,critout=TRUE)
+
+# El número óptimo de segmentos, según el criterio ASW es 
+clustering_asw$bestk
+
+# Graficamos
+plot(1:15,clustering_asw$crit,type="l",col="blue",pch=0,xlab="Número de clústers",ylab="Average Sillouethe Width", main = "Criterio Average Sillouethe Width")
+```
+
+**Método GAP STATISTIC**
+
+En el blog de rpubs, encontramos la siguiente definición de este método: __"Este estadístico compara, para diferentes valores de k, la varianza total intra-cluster observada frente al valor esperado acorde a una distribución uniforme de referencia. La estimación del número óptimo de clusters es el valor k con el que se consigue maximizar el estadístico gap"__.[^1]
+
+Vemos que, según este criterio, el número óptimo de clusters es 15, pudiendo tomar también 11  y 13.
+
+
+[^1]: Fuente: https://rpubs.com/Joaquin_AR/310338
+
+```{r message= FALSE, warning=FALSE}
+# Evaluamos con gap statistic
+# Mira el minimo k tal que el gap sea mayor que el gap de k+1 restado de su desviacion
+gscar<-clusGap(data_escale,FUN=kmeans,K.max=15,B=10)
+
+# Sacamos a un lado el indicador, para graficarlo
+gscar_gap= gscar$Tab[,3]
+
+# Graficamos
+plot(1:15,gscar_gap,type="l",col="blue",pch=0,xlab="Número de clústers",ylab="Average Sillouethe Width", main = "Criterio GAP Statistics")
+
+```
+**Evaluación de segmentos Bootstrap**
+
+Esta evaluación consiste en un muestro bootstrap  para evaluar cuán estable es un segmento dado. La idea es quedarnos con el de mayor índice.
+Una regla que nos permite medirlo es considerar muy bueno a aquellos mayores que 0.85.
+
+Vemos que, con 8 segmentos conseguimos una alta estabilidad, 0.95.
+
+
+```{r message= FALSE, warning=FALSE}
+#validar resultados- consistencia
+kclusters <- clusterboot(data_escale,B=10,clustermethod=kmeansCBI,k=15,seed=5)
+
+#la validacion del resultado. <0.75 o .85 muy bueno; <.6 malo
+kclusters$bootmean
+
+# Graficamos:
+plot(1:15,kclusters$bootmean,type="l",col="blue",pch=0,xlab="Número de clústers",ylab="Bootmean", main = "Evaluación de segmentos Bootstrap")
+
+
+```
+**Decisión**
+
+Entonces, después de evaluar los indicadores para tener el número óptimo de clústers, decidimos usar 4 segmentos, porque en todas las pruebas ha salido como el óptimo en un primer o segundo orden. Además, que tiene mucho sentido en la caracterización de lo que buscamos. A priori, las preferencias de consumo de las personas, considerando el abanico de rubros que tenemos, difícilmente se agrupen en 2 segmentos, por ello, 4 se hace un buen número.
+
+### Aplicación k-means
+
+En este paso, aplicaremos la segmentación kmeans, con un número de segmentos igual a 4, pero veremos qué pasa si usamos 2 y 8 (que fueron los otros k que salieron en las pruebas). 
+
+En los gráficos vemos que con 2 y 4 segmentos obtenemos grupos marcados, mientras que con 8 no tanto. Usaremos 4 segmentos.
+
+```{r message= FALSE, warning=FALSE}
+# Aplicamos kmeans
+consumo_clusters <- kmeans(data_escale, 4)
+
+#Vemos el número de iteraciones realizadas, los centroides y tamaños de cada segmento
+consumo_clusters$iter # Ver numero de iteraciones
+consumo_clusters$cluster
+consumo_clusters$centers
+consumo_clusters$size
+
+######################
+# Validación
+######################
+
+# Veamos la medio de los coeficientes de silueta
+sil_4 <- silhouette(consumo_clusters$cluster, dist(data_escale))
+
+# Si existen clústers con media menor o igual que cero, la clasificación es mala, cc, si es positivo, existe una clasificación correcta
+aggregate(sil_4[,3], list(sil_4[,1]), mean)
+
+# Graficamos
+plotcluster(Data_Consumo_Final[,5:15], consumo_clusters$cluster)
+
+# Probamos con 2 segmentos
+consumo_clusters_2 <- kmeans(data_escale, 2)
+consumo_clusters_2$iter # Ver numero de iteraciones
+#consumo_clusters_2$cluster
+consumo_clusters_2$centers
+consumo_clusters_2$size
+plotcluster(Data_Consumo_Final[,5:15], consumo_clusters_2$cluster)
+#Validación
+sil_2 <- silhouette(consumo_clusters_2$cluster, dist(data_escale))
+aggregate(sil_2[,3], list(sil_2[,1]), mean)
+
+
+# Probamos con 8 segmentos
+consumo_clusters_8 <- kmeans(data_escale, 8)
+consumo_clusters_8$iter # Ver numero de iteraciones
+#consumo_clusters_8$cluster
+consumo_clusters_8$centers
+consumo_clusters_8$size
+plotcluster(Data_Consumo_Final[,5:15], consumo_clusters_8$cluster)
+#Validación
+sil_8 <- silhouette(consumo_clusters_8$cluster, dist(data_escale))
+aggregate(sil_8[,3], list(sil_8[,1]), mean)
+
+```
+
+## Clustering JERÁRQUICO
+
+En el blog Rpubs, un post de Miguel Jiménez describe esta técnica de manera muy precisa:
+
+"La agrupación es una técnica para agrupar puntos de datos similares en un grupo y separar las diferentes observaciones en diferentes grupos o grupos. En Hierarchical Clustering, los clusters se crean de manera que tengan un orden predeterminado, es decir, una jerarquía."
+
+Para mayor alcance de esta técnica, remito la fuente: http://rpubs.com/mjimcua/clustering-jerarquico-en-r
+
+Usando la base normalizada y sin outliers (data_escale), aplicaremos la segmentación jerárquica. Debido al coste computacional alto obviamos el paso de las comparaciones entre métodos de aglomeración jerárquica (complete, average, ward.D2, single, etc.), este paso ya se realizó, y el mejor método resultó ward.D. El método que se usó para ta comparación se deja comentado.
+
+Vemos en el dendograma, que podemos cortar la gráfico en 4 y 5 grupos. Decidimos usar 4 grupos, siguiendo la validación en el ejercicio anterior.
+
+```{r message= FALSE, warning=FALSE}
+library(factoextra)
+
+#################################
+# Comparación de métodos
+#################################
+#library(purrr)
+
+#m <- c( "average", "single", "complete", "ward")
+#names(m) <- c( "average", "single", "complete", "ward")
+ 
+## ´Función de coeficiente de aglomeración (el más alto indica el mejor método)
+#ac <- function(x) {
+#  agnes(df, method = x)$ac
+#}
+#map_dbl(m, ac)  
+################################################################################
+
+
+# Creamos una copia de la bd donde tenemos las columnas estandarizadas
+df = data.frame(data_escale)
+
+# Creamos dos funciones: 
+### Aplicamos clúster jerárquico, bajo el método ward.D
+hclustfunc <- function(x) hclust(x, method="ward.D")
+### Creamos una función de distancia para la matriz de disimilaridad
+distfunc <- function(x) as.dist((1-cor(t(x)))/2)
+
+# Aplicamos las funciones creadas 
+d <- distfunc(df)
+fit <- hclustfunc(d)
+
+# Graficamos el dendograma y la intersección que refleja las 4 aglomeraciones
+plot(fit)+
+abline(h=220, col="red")
+```
+Probemos con 5 grupos. Veremos que existen pocas diferencias con 4 segmentos
+```{r message= FALSE, warning=FALSE}
+# Formamos los 5 grupos
+clusteres_consumo <- cutree(tree = fit, k = 5)
+
+###########################
+# Validación
+##########################
+# Mediante el mismo coeficiente usado en kmeans (silueta)
+sil_jerar <- silhouette(clusteres_consumo, dist(data_escale))
+aggregate(sil_jerar[,3], list(sil_jerar[,1]), mean)
+
+
+# Traemos los grupos al dataframe df, que es con el que realizamos el análisis
+df=cbind(data_escale,data.frame(clusteres_consumo))
+
+# Graficamos algunas variables y las coloreamos según los segmentos obtenidos
+ggplot(df, aes(df$sector_entretenimiento, df$sector_eduacion, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue", "yellow"))+
+  ggtitle("Entretenimiento vs Educación") +
+  xlab("Entretenimiento") + ylab("Educación")+
+  labs(color = "Segmentos\n")
+
+
+ggplot(df, aes(df$sector_entretenimiento, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue", "yellow"))+
+  ggtitle("Entretenimiento vs Finanzas") +
+  xlab("Entretenimiento") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+ggplot(df, aes(df$sector_eduacion, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue", "yellow"))+
+  ggtitle("Educación vs Finanzas") +
+  xlab("Educación") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+ggplot(df, aes(df$sector_supermcd, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue", "yellow"))+
+  ggtitle("Supermercados vs Finanzas") +
+  xlab("Supermercados") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+```
+
+Ahora, cortamos las aglomeraciones en 4 y graficamos el comportamiento de estos grupos en planos bidimensionales de los sectores con mayor cantidad de rubros absorbidos en el paso del pca (educación, finanzas, supermercado y entretenimiento).
+
+Si bien no hay grupos muy marcados, en todos los gráficos vemos que el segmento dos y 4 son predominantes.
+
+```{r message= FALSE, warning=FALSE}
+# Formamos los 4 grupos
+clusteres_consumo <- cutree(tree = fit, k = 4)
+
+###########################
+# Validación
+##########################
+# Mediante el mismo coeficiente usado en kmeans (silueta)
+sil_jerar <- silhouette(clusteres_consumo, dist(data_escale))
+aggregate(sil_jerar[,3], list(sil_jerar[,1]), mean)
+
+
+
+# Traemos los grupos al dataframe df, que es con el que realizamos el análisis
+df=cbind(data_escale,data.frame(clusteres_consumo))
+
+# Graficamos algunas variables y las coloreamos según los segmentos obtenidos
+ggplot(df, aes(df$sector_entretenimiento, df$sector_eduacion, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Entretenimiento vs Educación") +
+  xlab("Entretenimiento") + ylab("Educación")+
+  labs(color = "Segmentos\n")
+
+
+ggplot(df, aes(df$sector_entretenimiento, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Entretenimiento vs Finanzas") +
+  xlab("Entretenimiento") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+ggplot(df, aes(df$sector_eduacion, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Educación vs Finanzas") +
+  xlab("Educación") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+ggplot(df, aes(df$sector_supermcd, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Supermercados vs Finanzas") +
+  xlab("Supermercados") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+```
+
+Obtenemos la influencia de cada sector por cada segmento:
+
+```{r message= FALSE, warning=FALSE}
+Data_Segmentada = cbind(Data_Consumo_Final, data.frame(clusteres_consumo))
+
+# le damos forma para trabajarla
+Data_Segmentada_Unida=tidyr::gather(data=Data_Segmentada, key = desc_segmento, value = valor_rubro, 5:15)
+
+#install.packages("fmsb")
+library(fmsb)
+
+# Usamos el gráfico de radar para ver las preferencias de cada segmento.
+radar_data = aggregate(Data_Segmentada[, 5:15], list(Data_Segmentada$cluster), max)
+radar_data= data.frame(radar_data)
+radar_data_1 = data.frame(radar_data[1,2:12])
+data_1 = rbind(rep(4,11) , rep(0,11) , radar_data_1)
+radarchart(data_1)
+
+radar_data_2 = data.frame(radar_data[2,2:12])
+data_2 = rbind(rep(3.2,11) , rep(0,11) , radar_data_2)
+radarchart(data_2)
+
+radar_data_3 = data.frame(radar_data[3,2:12])
+data_3 = rbind(rep(3,11) , rep(0,11) , radar_data_3)
+radarchart(data_3)
+
+radar_data_4 = data.frame(radar_data[4,2:12])
+data_4 = rbind(rep(4,11) , rep(0,11) , radar_data_4)
+radarchart(data_4)
+```
+
+Ahora, veremos los descriptivos.
+
+```{r}
+#install.packages("viridis")
+library(viridis)
+#install.packages("hrbrthemes")
+library(hrbrthemes)
+
+edad_cluster = Data_Segmentada_Unida[,c(2,5)] %>% 
+                dplyr:::group_by(edad, clusteres_consumo) %>% 
+                  dplyr:::summarise(n = n())
+
+
+ggplot(edad_cluster, aes(fill=edad, y=n, x=edad)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución de las edades por cluster") +
+    facet_wrap(~clusteres_consumo) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+
+
+ingreso_cluster = Data_Segmentada_Unida[,c(3,5)] %>% 
+                    group_by(ingreso, clusteres_consumo) %>% 
+                      summarise(n = n())
+
+ggplot(ingreso_cluster, aes(fill=ingreso, y=n, x=ingreso)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución de los ingresos por segmento") +
+    facet_wrap(~clusteres_consumo) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+
+sexo_cluster = Data_Segmentada_Unida[,c(4,5)] %>% 
+                    group_by(sexo, clusteres_consumo) %>% 
+                      summarise(n = n())
+
+ggplot(sexo_cluster, aes(fill=sexo_cluster$sexo, y=sexo_cluster$n, x=sexo_cluster$sexo)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución del sexo por segmento") +
+    facet_wrap(~clusteres_consumo) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+```
+
+## Clustering de Partición entorno a Centroides (PAM)
+
+Una definición que podemos encontrar en wikipedia de este método, es la siguiente: "Tanto el k-medoids como el k-means son algoritmos que trabajan con particiones (dividiendo el conjunto de datos en grupos) y ambos intentan minimizar la distancia entre puntos que se añadirían a un grupo y otro punto designado como el centro de ese grupo. En contraste con el algoritmo k-means, k-medoids escoge datapoints como centros y trabaja con una métrica arbitraria de distancias entre datapoints en vez de usar la norma **l2**. En 1987 se propuso este método para el trabajo con la norma **l1** y otras distancias."
+
+```{r message= FALSE, warning=FALSE}
+# Usamos la librería purr
+library(purrr)
+
+# Traemos la data trabajada en el profiling
+datos = data_escale
+
+# Generamos los segmentos usando el método basado en medoides PAM. Usamos el número de segmentos 4, obtenido en la parte de elección de k
+set.seed(123)
+pam_clusters <- pam(x = datos, k = 4, metric = "manhattan")
+
+# Graficamos
+clusplot(pam_clusters)
+
+#########################
+# Validación
+#########################
+
+# Usamos la media de los coeficientes de silueta para validar si el agrupamiento es bueno
+sil_pam <- silhouette(pam_clusters$clustering, dist(data_escale))
+aggregate(sil_pam[,3], list(sil_pam[,1]), mean)
+
+# Traemos la data y la unimos a los clústeres obtenidos
+df=cbind(data_escale,pam_clusters$clustering)
+df=data.frame(df)
+colnames(df)[12] = "clusteres_consumo"
+
+
+ggplot(df, aes(df$sector_entretenimiento, df$sector_eduacion, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Entretenimiento vs Educación") +
+  xlab("Entretenimiento") + ylab("Educación")+
+  labs(color = "Segmentos\n")
+
+
+ggplot(df, aes(df$sector_entretenimiento, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Entretenimiento vs Finanzas") +
+  xlab("Entretenimiento") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+ggplot(df, aes(df$sector_eduacion, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Educación vs Finanzas") +
+  xlab("Educación") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+ggplot(df, aes(df$sector_supermcd, df$sector_finanzas, color = as.factor(df$clusteres_consumo))) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = as.factor(clusteres_consumo)) + 
+  scale_color_manual(values = c('black', 'red', 'green', "blue"))+
+  ggtitle("Supermercados vs Finanzas") +
+  xlab("Supermercados") + ylab("Finanzas")+
+  labs(color = "Segmentos\n")
+
+```
+Graficamos la influencia de los sectores por cada segmento calculado.
+```{r message= FALSE, warning=FALSE}
+# Traemos la data original y le agregamos el clustering
+Data_Segmentada = cbind(Data_Consumo_Final, data.frame(pam_clusters$clustering))
+colnames(Data_Segmentada)[16]="cluster"
+
+# le damos forma para trabajarla
+Data_Segmentada_Unida=tidyr::gather(data=Data_Segmentada, key = desc_segmento, value = valor_rubro, 5:15)
+
+#install.packages("fmsb")
+library(fmsb)
+
+# Usamos el gráfico de radar para ver las preferencias de cada segmento.
+radar_data = aggregate(Data_Segmentada[, 5:15], list(Data_Segmentada$cluster), max)
+radar_data= data.frame(radar_data)
+radar_data_1 = data.frame(radar_data[1,2:12])
+data_1 = rbind(rep(4,11) , rep(0,11) , radar_data_1)
+radarchart(data_1)
+
+radar_data_2 = data.frame(radar_data[2,2:12])
+data_2 = rbind(rep(3.2,11) , rep(0,11) , radar_data_2)
+radarchart(data_2)
+
+radar_data_3 = data.frame(radar_data[3,2:12])
+data_3 = rbind(rep(3,11) , rep(0,11) , radar_data_3)
+radarchart(data_3)
+
+radar_data_4 = data.frame(radar_data[4,2:12])
+data_4 = rbind(rep(4,11) , rep(0,11) , radar_data_4)
+radarchart(data_4)
+
+```
+
+Ahora, mostramos los descriptivos:
+
+```{r message= FALSE, warning=FALSE}
+edad_cluster = Data_Segmentada_Unida[,c(2,5)] %>% 
+                group_by(edad, cluster) %>% 
+                  summarise(n = n())
+library(viridis)
+library(hrbrthemes)
+ggplot(edad_cluster, aes(fill=edad_cluster$edad, y=edad_cluster$n, x=edad_cluster$edad)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución de las edades por cluster") +
+    facet_wrap(~cluster) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+ingreso_cluster = Data_Segmentada_Unida[,c(3,5)] %>% 
+                    group_by(ingreso, cluster) %>% 
+                      summarise(n = n())
+
+ggplot(ingreso_cluster, aes(fill=ingreso_cluster$ingreso, y=ingreso_cluster$n, x=ingreso_cluster$ingreso)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución de los ingresos por segmento") +
+    facet_wrap(~cluster) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+
+sexo_cluster = Data_Segmentada_Unida[,c(4,5)] %>% 
+                    group_by(sexo, cluster) %>% 
+                      summarise(n = n())
+
+ggplot(sexo_cluster, aes(fill=sexo_cluster$sexo, y=sexo_cluster$n, x=sexo_cluster$sexo)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución del sexo por segmento") +
+    facet_wrap(~cluster) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+```
+
+**COMPARACIONES**
+
+Para todos los casos (PAM, K-MEANS y jerárquico) hemos usado 4 segmentos, los cuales fueron seleccionados después de inspeccionar varias técnicas. La validación de cuán bien agrupan los clústeres la realizamos mediante el coeficiente de silueta. En el siguiente link, se encuentra la explicación de este coeficiente como validación clustering: https://towardsdatascience.com/clustering-analysis-in-r-using-k-means-73eca4fb7967
+
+Vemos que el mejor es el kmeans, pues todos sus segmentos tienen una media positiva. Esto también lo podemos ver en el gráfico.
+
+```{r message= FALSE, warning=FALSE}
+# Coeficiente clustering
+
+# Kmeans
+aggregate(sil_4[,3], list(sil_4[,1]), mean)
+# Jerárquico
+aggregate(sil_jerar[,3], list(sil_jerar[,1]), mean)
+# PAM
+aggregate(sil_pam[,3], list(sil_pam[,1]), mean)
+
+```
+
+# Resultados
+
+## Análisis visual del conjunto de datos
+
+En la primera parte echamos mano de algunos gráficos para revisar algunos indicadores, como cantidad de transacciones, respecto a algunas variables. Finalmente, veremos algunos descriptivos de cada segmento, como la edad, el ingreso y el sexo. Asimismo, presentamos los gráficos de radar que son muy útiles para ver las preferencias por segmentos.
+
+
+```{r message= FALSE, warning=FALSE}
+# Traemos a la base, los segmentos hallados
+Data_Segmentada = cbind(Data_Consumo_Final, cluster=consumo_clusters$cluster )
+
+# le damos forma para traabjarla
+Data_Segmentada_Unida=tidyr::gather(data=Data_Segmentada, key = desc_segmento, value = valor_rubro, 5:15)
+
+#install.packages("fmsb")
+library(fmsb)
+
+# Usamos el gráfico de radar para ver las preferencias de cada segmento.
+radar_data = aggregate(Data_Segmentada[, 5:15], list(Data_Segmentada$cluster), max)
+radar_data= data.frame(radar_data)
+radar_data_1 = data.frame(radar_data[1,2:12])
+data_1 = rbind(rep(4,11) , rep(0,11) , radar_data_1)
+radarchart(data_1)
+
+radar_data_2 = data.frame(radar_data[2,2:12])
+data_2 = rbind(rep(3.2,11) , rep(0,11) , radar_data_2)
+radarchart(data_2)
+
+radar_data_3 = data.frame(radar_data[3,2:12])
+data_3 = rbind(rep(3,11) , rep(0,11) , radar_data_3)
+radarchart(data_3)
+
+radar_data_4 = data.frame(radar_data[4,2:12])
+data_4 = rbind(rep(4,11) , rep(0,11) , radar_data_4)
+radarchart(data_4)
+```
+
+Seguimos con los demás descriptivos, en los que vemos las distribuciones de edad, sexo e ingreso por segmentos.
+
+```{r message= FALSE, warning=FALSE}
+
+library(viridis)
+#install.packages("hrbrthemes")
+library(hrbrthemes)
+
+edad_cluster = Data_Segmentada_Unida[,c(2,5)] %>% 
+                group_by(edad, cluster) %>% 
+                  summarise(n = n())
+
+
+ggplot(edad_cluster, aes(fill=edad_cluster$edad, y=edad_cluster$n, x=edad_cluster$edad)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución de las edades por cluster") +
+    facet_wrap(~cluster) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+
+
+ingreso_cluster = Data_Segmentada_Unida[,c(3,5)] %>% 
+                    group_by(ingreso, cluster) %>% 
+                      summarise(n = n())
+
+ggplot(ingreso_cluster, aes(fill=ingreso_cluster$ingreso, y=ingreso_cluster$n, x=ingreso_cluster$ingreso)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución de los ingresos por segmento") +
+    facet_wrap(~cluster) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+
+sexo_cluster = Data_Segmentada_Unida[,c(4,5)] %>% 
+                    group_by(sexo, cluster) %>% 
+                      summarise(n = n())
+
+ggplot(sexo_cluster, aes(fill=sexo_cluster$sexo, y=sexo_cluster$n, x=sexo_cluster$sexo)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Distribución del sexo por segmento") +
+    facet_wrap(~cluster) +
+    #theme_ipsum() +
+    theme(legend.position="none") +
+    xlab("")
+
+```
+
+
+# Resolución del problema
+
+Una vez obtenido los segmentos, 4, es importante ver cuál es la característica asociada. Hemos visto que hay segmentos en los que los hombres son los de mayor proporción, o donde el sector entretenimiento y salud son los más consumidos. Esto podría darnos un perfilamiento acerca de las preferencias de consumo y edades. Si dispuesiéramos de mayor información (si es un banco, de hecho que lo maneja), podríamos enriquecer ese perfilamiento con más variables y estos segmentos fácilmente podrían corresponder a estilos de vida, sobre un enfoque de consumo. La utilidad mayor sería mejorar las ofertas, por ejemplo ofreciendo descuentos a los segmentos donde prevale el consumo entretenimiento.
